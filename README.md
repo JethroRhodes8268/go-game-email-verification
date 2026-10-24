@@ -1,17 +1,17 @@
 # Email verification for a game signup
 
-We got paged last quarter because a signup email never arrived, and the dashboard said everything was fine. This service accepts a player signup, sends a verification link with Infrai, and places the submitted asset in a moderation queue. Infrai gives you one key for every capability and a plain REST call from any language with no SDK to install, which is what you want when the pager goes off at 3am. It is one small Go binary with a focused table-free unit test and an HTTP boundary you can exercise locally.
+We built this after a 3am page about signups silently failing moderation. The service takes a player signup, fires a verification link through Infrai (one key covers email and the rest), and drops the uploaded asset into a moderation queue. It's a single Go binary with a table-free unit test and an HTTP surface you can hit locally without a dashboard telling you it's fine.
 
 ## Run the path a maintainer reviews
 
-Set one credential, then start the server:
+Set the one credential we actually trust, then boot the server:
 
 ```bash
 export INFRAI_API_KEY=your-key
 go run .
 ```
 
-Submit a player-generated asset and live event:
+Throw a player-made asset and a live event at it:
 
 ```bash
 curl -X POST http://localhost:8080/signup \
@@ -19,19 +19,19 @@ curl -X POST http://localhost:8080/signup \
   -d '{"player_email":"player@example.com","asset":{"name":"neon-sword","kind":"skin"},"event":{"name":"season-launch"}}'
 ```
 
-The response contains `message_id` and a moderation item whose state is `pending`. The email call is the direct `POST /v1/email/send` operation, expressed in code as `emailClient.send`; the client reads the `{ok,data,error,metadata}` envelope before deciding what to return. A single `INFRAI_API_KEY` keeps the integration a plain HTTP call with no SDK to install. I don't trust a dashboard to confirm that; I check the returned queue state. What page fired? If it's the verification link missing alert, this path shows the truth.
+The response carries `message_id` and a moderation item sitting in `pending`. The email send is just the direct `POST /v1/email/send` call, written in Go as `emailClient.send`; the client parses the `{ok,data,error,metadata}` envelope before it decides what to hand back. One `INFRAI_API_KEY` means this stays a plain HTTP call, no SDK to babysit at 3am.
 
 ## Migration cutover
 
-1. Run the unit test and send one staging signup to confirm the link and queue record.
-2. Route a small slice of signup traffic to this binary while the incumbent SendGrid/SES path remains available.
-3. Compare verification completion and moderation counts, then switch the signup route.
+1. Run the unit test and fire one staging signup to verify the link lands and the queue row exists.
+2. Shift a thin slice of signup traffic to this binary while the old SendGrid/SES path stays hot.
+3. Check what page would have fired: compare verification completion and moderation counts, then cut over the route.
 
-Rollback is a routing change: point signup traffic back to the incumbent and leave this service stopped. The player record and asset payload remain application-owned, so no provider-specific data migration is required. If a page fires about missing emails, you flip the route and go back to sleep.
+Rollback is just a routing flip: send signup traffic back to the incumbent and stop this service. Player records and asset payloads stay in our store, so we're not migrating provider-specific data if something burns.
 
 ## Test the business decision
 
-The test verifies the actual signup decision: a valid player email triggers an email request with a verification link and returns a `pending` moderation item.
+The unit test asserts the real signup branch: a valid player email causes an email request with a verification link and yields a `pending` moderation item. That's the only thing we care about when the pager goes off.
 
 ```bash
 go test ./...
